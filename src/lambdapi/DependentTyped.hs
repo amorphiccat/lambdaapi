@@ -1,10 +1,12 @@
-module LambdaPi.SimpleTyped where
+module LambdaPi.DependentTyped where
 
 import Control.Monad
 import Debug.Trace
 
 data TermInfer
-    = Ann TermCheck Type
+    = Ann TermCheck TermCheck 
+    | Star
+    | Pi TermCheck TermCheck
     | Bound Int
     | Free Name
     | TermInfer :@ TermCheck
@@ -30,6 +32,8 @@ infixr 6 :->
 
 data Value
     = VLam (Value -> Value)
+    | VStar
+    | VPi Value (Value -> Value)
     | VNeutral Neutral
 
 data Neutral 
@@ -42,6 +46,8 @@ vfree = VNeutral . NFree
 type Env = [Value]
 
 evalInfer :: TermInfer -> Env -> Value
+evalInfer Star env = VStar
+evalInfer (Pi t t') env = VPi (evalCheck t env) (\x -> evalCheck t' (x:env))
 evalInfer (Ann e _) env = evalCheck e env
 evalInfer (Free x) env = vfree x
 evalInfer (Bound i) env = env !! i
@@ -55,15 +61,8 @@ evalCheck :: TermCheck -> Env -> Value
 evalCheck (Inf i) env = evalInfer i env
 evalCheck (Lam e) env = VLam (\x -> evalCheck e (x:env))
 
-data Kind = Star
-    deriving (Show)
-
-data Info
-    = HasKind Kind
-    | HasType Type
-    deriving (Show)
-
-type Context = [(Name, Info)]
+type Type = Value
+type Context = [(Name, Type)]
 
 type Result a = Either String a
 
@@ -108,6 +107,8 @@ typeCheck i ctx (Lam e) (t :-> t') =
 typeCheck i ctx e t = trace (show e ++ " /// " ++ show t) $ throwError "type mismatch"
 
 substInfer :: Int -> TermInfer -> TermInfer -> TermInfer
+substInfer i r Star = Star
+substInfer i r (Pi t t') = Pi (substCheck i r t) (substCheck (i+1) r t')
 substInfer i r (Ann e t) = Ann (substCheck i r e) t
 substInfer i r (Bound j) = if i == j then r else Bound j
 substInfer i r (Free y) = Free y
@@ -121,6 +122,8 @@ quote0 :: Value -> TermCheck
 quote0 = quote 0
 
 quote :: Int -> Value -> TermCheck
+quote i VStar = inf Star
+quote i (VPi v f) = Inf (Pi (quote i v) (quote (i+1) (f (vfree (Quote i)))))
 quote i (VLam f) = Lam (quote (i+1) (f (vfree (Quote i))))
 quote i (VNeutral n) = Inf (neutralQuote i n)
 
